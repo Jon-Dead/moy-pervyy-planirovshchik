@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101012">
+  <title>Домашние тренировки</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#exercises" aria-label="Домашние тренировки — каталог упражнений">
+        <span class="brand-mark" aria-hidden="true">Д</span>
+        <span><strong>ДОМА</strong><small>ТВОЙ ФИТНЕС-ПЛАН</small></span>
+      </a>
+      <span class="local-badge"><span class="status-dot"></span>Сохранено в браузере</span>
+    </header>
+
+    <nav class="main-nav" aria-label="Разделы приложения">
+      <button type="button" class="nav-button active" data-screen="plan" aria-current="page"><span aria-hidden="true">▦</span>План</button>
+      <button type="button" class="nav-button" data-screen="exercises"><span aria-hidden="true">◈</span>Упражнения</button>
+      <button type="button" class="nav-button" data-screen="templates"><span aria-hidden="true">▤</span>Шаблоны</button>
+    </nav>
+
+    <main id="app" class="main-content" tabindex="-1" aria-live="polite"></main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <dialog id="exercise-dialog" class="dialog"></dialog>
+  <dialog id="template-dialog" class="dialog"></dialog>
+  <dialog id="apply-dialog" class="dialog dialog-small"></dialog>
+  <dialog id="workout-dialog" class="dialog"></dialog>
+  <dialog id="generator-dialog" class="dialog dialog-small"></dialog>
+  <dialog id="confirm-dialog" class="dialog dialog-small"></dialog>
+</body>
+</html>
