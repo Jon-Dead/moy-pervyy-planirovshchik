@@ -80,6 +80,7 @@
   let pendingImageData = '';
   let pendingImageError = '';
   let storageWarning = '';
+  let pendingBackup = null;
   let appData;
   let lastSavedData;
 
@@ -108,12 +109,43 @@
       templates: structuredCloneSafe(BUILTIN_TEMPLATES),
       workouts: [],
       recurrences: [],
-      uiState: { screen: 'exercises' }
+      uiState: { screen: 'plan' }
     };
   }
 
-  function validRoot(data) {
-    return data && data.schemaVersion === 1 && Array.isArray(data.exercises) && Array.isArray(data.templates) && Array.isArray(data.workouts) && Array.isArray(data.mediaAssets);
+  function validRoot(data) { return validateData(data); }
+
+  function validateData(data) {
+    if (!data || typeof data !== 'object' || data.schemaVersion !== 1 || !Array.isArray(data.exercises) || !Array.isArray(data.templates) || !Array.isArray(data.workouts) || !Array.isArray(data.mediaAssets)) return false;
+    if (data.recurrences !== undefined && !Array.isArray(data.recurrences)) return false;
+    if (data.settings !== undefined && (!data.settings || typeof data.settings !== 'object' || typeof data.settings.largeText !== 'boolean' || typeof data.settings.highContrast !== 'boolean' || (data.settings.onboardingDismissed !== undefined && typeof data.settings.onboardingDismissed !== 'boolean'))) return false;
+    if (data.goal !== undefined && (!Number.isInteger(data.goal.weeklyTarget) || data.goal.weeklyTarget < 1 || data.goal.weeklyTarget > 14)) return false;
+    const uniqueIds = (items) => items.every((item) => item && typeof item.id === 'string' && item.id.trim()) && new Set(items.map((item) => item.id)).size === items.length;
+    if (![data.exercises, data.templates, data.workouts, data.mediaAssets, data.recurrences || []].every(uniqueIds)) return false;
+    let mediaBytes = 0;
+    for (const asset of data.mediaAssets) {
+      if (!/^image\/(jpeg|png|webp)$/.test(asset.mimeType || '') || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(asset.dataUrl || '')) return false;
+      if (asset.dataUrl.slice(5, asset.dataUrl.indexOf(';')) !== asset.mimeType) return false;
+      const bytes = dataUrlBytes(asset.dataUrl); if (!bytes || bytes > MAX_IMAGE_BYTES) return false; mediaBytes += bytes;
+    }
+    if (mediaBytes > MAX_TOTAL_IMAGE_BYTES) return false;
+    const assetIds = new Set(data.mediaAssets.map((asset) => asset.id));
+    const validRef = (ref) => ref && (ref.type === 'builtin' ? !!BUILTIN_ART[ref.imageKey] : ref.type === 'custom' && assetIds.has(ref.assetId));
+    const validPrescription = (prescription) => prescription && typeof prescription === 'object' && Object.entries(prescription).every(([key, value]) => ['sets','reps','durationSec','distanceMeters','weightKg'].includes(key) && Number.isFinite(value) && value > 0 && (key === 'weightKg' || Number.isInteger(value)));
+    const validItems = (items) => Array.isArray(items) && items.every((item) => item && typeof item.itemId === 'string' && item.itemId.trim() && typeof item.exerciseId === 'string' && item.exerciseId.trim() && typeof item.exerciseNameSnapshot === 'string' && item.exerciseNameSnapshot.trim() && Array.isArray(item.muscleGroupsSnapshot) && item.muscleGroupsSnapshot.length && item.muscleGroupsSnapshot.every((group) => typeof group === 'string' && group.trim()) && typeof item.descriptionSnapshot === 'string' && item.descriptionSnapshot.trim() && validRef(item.illustrationRef) && validPrescription(item.prescription) && typeof item.completed === 'boolean' && (item.order === undefined || (Number.isInteger(item.order) && item.order >= 0)) && (item.equipmentSnapshot === undefined || (Array.isArray(item.equipmentSnapshot) && item.equipmentSnapshot.every((entry) => typeof entry === 'string'))));
+    const validDate = (value) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false; const date = parseLocalDate(value); return localDateString(date) === value; };
+    if (!data.exercises.every((item) => typeof item.name === 'string' && item.name.trim() && Array.isArray(item.muscleGroups) && item.muscleGroups.length && item.muscleGroups.every((group) => typeof group === 'string' && group.trim()) && Array.isArray(item.equipment || []) && typeof item.description === 'string' && item.description.trim() && validRef(item.illustrationRef) && (item.prescriptionDefaults === undefined || validPrescription(item.prescriptionDefaults)))) return false;
+    if (!data.templates.every((item) => typeof item.name === 'string' && item.name.trim() && typeof item.isArchived === 'boolean' && ['builtin', 'custom'].includes(item.source) && Array.isArray(item.items) && validItems(item.items) && new Set(item.items.map((entry) => entry.itemId)).size === item.items.length)) return false;
+    if (!data.workouts.every((item) => validDate(item.date) && ['manual','template','copy','recurrence'].includes(item.source) && typeof item.skipped === 'boolean' && validItems(item.items) && new Set(item.items.map((exercise) => exercise.itemId)).size === item.items.length)) return false;
+    if (!(data.recurrences || []).every((item) => Array.isArray(item.weekdays) && item.weekdays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6) && validDate(item.startDate) && validDate(item.endDate) && item.endDate >= item.startDate && Array.isArray(item.workoutIds) && item.workoutIds.every((workoutId) => typeof workoutId === 'string' && workoutId.trim()) && Array.isArray(item.excludedDates || []) && (item.excludedDates || []).every(validDate))) return false;
+    return true;
+  }
+
+  function normalizeData(data) {
+    const normalized = structuredCloneSafe(data);
+    normalized.settings ||= { highContrast: false, largeText: false, onboardingDismissed: false };
+    normalized.goal ||= { weeklyTarget: 3 }; normalized.recurrences ||= []; normalized.uiState ||= { screen: 'plan' };
+    return normalized;
   }
 
   function boot() {
@@ -128,7 +160,7 @@
         appData.mediaAssets ||= [];
         appData.workouts ||= [];
         appData.recurrences ||= [];
-        appData.uiState ||= { screen: 'exercises' };
+        appData.uiState ||= { screen: 'plan' };
       } else {
         appData = initialData();
         saveData();
@@ -137,7 +169,9 @@
       applyPreferences();
       render();
     } catch (error) {
-      app.innerHTML = `<section class="empty-state"><div><div class="empty-symbol">!</div><strong>Не удалось открыть сохранённые данные</strong><p>${escapeHtml(error.message || 'Данные в браузере повреждены или недоступны.')}</p><div class="welcome-actions"><button class="button button-quiet" type="button" data-action="download-raw">Скачать копию данных</button><button class="button button-danger" type="button" data-action="reset-storage">Сбросить данные</button></div><p class="help-text">Сброс удалит сохранённые упражнения и шаблоны из этого браузера.</p></div></section>`;
+      storageWarning = error.message || 'Сохранённые данные повреждены или недоступны.';
+      updateStorageBadge();
+      app.innerHTML = `<section class="empty-state"><div><div class="empty-symbol">!</div><strong>Не удалось открыть сохранённые данные</strong><p>${escapeHtml(error.message || 'Данные в браузере повреждены или недоступны.')}</p><div class="welcome-actions"><button class="button button-quiet" type="button" data-action="download-raw">Скачать копию данных</button></div><label class="form-field">Для сброса введи фразу «Удалить все данные»<input class="field" id="reset-corrupt-text" autocomplete="off"></label><button class="button button-danger" type="button" data-action="reset-corrupt">Сбросить данные</button></div></section>`;
     }
   }
 
@@ -147,12 +181,14 @@
       localStorage.setItem(STORAGE_KEY, serialized);
       lastSavedData = serialized;
       storageWarning = '';
+      updateStorageBadge();
       return true;
     } catch (error) {
       if (lastSavedData) {
         try { appData = JSON.parse(lastSavedData); } catch { /* retain current in-memory value if recovery fails */ }
       }
       storageWarning = error?.name === 'QuotaExceededError' ? 'В браузере закончилась квота для хранения. Удалите часть пользовательских изображений или резервную копию.' : 'Браузер не разрешил сохранить данные. Изменение отменено.';
+      updateStorageBadge();
       return false;
     }
   }
@@ -172,6 +208,123 @@
   function applyPreferences() {
     document.body.classList.toggle('large-text', !!appData.settings.largeText);
     document.body.classList.toggle('high-contrast', !!appData.settings.highContrast);
+  }
+
+  function updateStorageBadge() {
+    const text = document.getElementById('storage-status-text'), badge = document.getElementById('storage-status'), dot = badge?.querySelector('.status-dot');
+    if (!text || !badge) return;
+    text.textContent = storageWarning ? 'Ошибка сохранения' : 'Сохранено в браузере';
+    badge.title = storageWarning || 'Изменения хранятся только в этом браузере.';
+    badge.setAttribute('aria-label', storageWarning || 'Данные сохранены в браузере');
+    badge.classList.toggle('has-error', !!storageWarning);
+    dot?.classList.toggle('error-dot', !!storageWarning);
+  }
+
+  function exportData() {
+    const date = localDateString(new Date());
+    downloadFile(`home-fitness-planner-${date}.json`, JSON.stringify(appData, null, 2), 'application/json;charset=utf-8');
+    toast('Резервная копия создана.');
+  }
+
+  async function handleBackupFile(input) {
+    const status = document.getElementById('backup-status'), button = document.getElementById('import-apply');
+    pendingBackup = null; if (button) button.disabled = true;
+    const file = input.files?.[0]; if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (parsed?.schemaVersion > 1) throw new Error('Файл создан более новой версией приложения. Обновите приложение перед импортом.');
+      if (!validateData(parsed)) throw new Error('Структура резервной копии повреждена или не поддерживается.');
+      pendingBackup = normalizeData(parsed);
+      if (status) status.textContent = `Файл проверен: ${parsed.exercises.length} упражнений, ${parsed.templates.length} шаблонов, ${parsed.workouts.length} тренировок.`;
+      if (button) button.disabled = false;
+    } catch (error) { if (status) status.textContent = error.message || 'Не удалось прочитать JSON-файл.'; }
+  }
+
+  function stableStringify(value) {
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+    if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    return JSON.stringify(value);
+  }
+
+  function prepareIdMap(incoming, current, prefix) {
+    const map = new Map(), skipped = new Set(), used = new Set([...current.map((item) => item.id), ...incoming.map((item) => item.id)]);
+    incoming.forEach((record) => {
+      const existing = current.find((item) => item.id === record.id);
+      if (!existing) { map.set(record.id, record.id); return; }
+      if (stableStringify(existing) === stableStringify(record)) { map.set(record.id, record.id); skipped.add(record.id); return; }
+      let replacement; do { replacement = id(prefix); } while (used.has(replacement));
+      used.add(replacement); map.set(record.id, replacement);
+    });
+    return { map, skipped };
+  }
+
+  function remapRef(ref, assetMap) {
+    if (ref?.type === 'custom') ref.assetId = assetMap.get(ref.assetId) || ref.assetId;
+  }
+
+  function mergeBackup(incoming) {
+    const source = normalizeData(incoming), current = appData;
+    const maps = {
+      mediaAssets: prepareIdMap(source.mediaAssets, current.mediaAssets, 'asset'),
+      exercises: prepareIdMap(source.exercises, current.exercises, 'exercise'),
+      templates: prepareIdMap(source.templates, current.templates, 'template'),
+      workouts: prepareIdMap(source.workouts, current.workouts, 'workout'),
+      recurrences: prepareIdMap(source.recurrences, current.recurrences, 'recurrence')
+    };
+    let imported = 0, skipped = 0;
+    const append = (key, transform = (item) => item) => source[key].forEach((record) => {
+      if (maps[key].skipped.has(record.id)) { skipped++; return; }
+      const copy = structuredCloneSafe(record); copy.id = maps[key].map.get(record.id); transform(copy); current[key].push(copy); imported++;
+    });
+    append('mediaAssets');
+    append('exercises', (record) => { remapRef(record.illustrationRef, maps.mediaAssets.map); });
+    append('templates', (record) => { record.items.forEach((item) => { item.exerciseId = maps.exercises.map.get(item.exerciseId) || item.exerciseId; remapRef(item.illustrationRef, maps.mediaAssets.map); }); });
+    append('workouts', (record) => {
+      if (record.templateId) record.templateId = maps.templates.map.get(record.templateId) || record.templateId;
+      if (record.seriesId) record.seriesId = maps.recurrences.map.get(record.seriesId) || record.seriesId;
+      record.items.forEach((item) => { item.exerciseId = maps.exercises.map.get(item.exerciseId) || item.exerciseId; remapRef(item.illustrationRef, maps.mediaAssets.map); });
+    });
+    append('recurrences', (record) => {
+      if (record.templateId) record.templateId = maps.templates.map.get(record.templateId) || record.templateId;
+      record.workoutIds = record.workoutIds.map((workoutId) => maps.workouts.map.get(workoutId) || workoutId);
+    });
+    current.settings = structuredCloneSafe(source.settings); current.goal = structuredCloneSafe(source.goal);
+    collectUnusedMedia();
+    return { imported, skipped };
+  }
+
+  function applyImport() {
+    if (!pendingBackup) { toast('Сначала выбери и проверь JSON-файл.', true); return; }
+    const mode = document.getElementById('import-mode')?.value || 'replace';
+    const apply = () => {
+      if (mode === 'replace') appData = normalizeData(pendingBackup);
+      else mergeBackup(pendingBackup);
+      collectUnusedMedia(); screen = 'plan';
+      if (mutate(mode === 'replace' ? 'Резервная копия восстановлена' : 'Данные объединены')) pendingBackup = null;
+    };
+    if (mode === 'replace') confirmAction('Заменить все данные?', 'Текущие упражнения, настройки, расписание и история будут заменены содержимым резервной копии.', 'Заменить', apply);
+    else {
+      const result = mergeBackup(pendingBackup); collectUnusedMedia(); screen = 'plan';
+      if (mutate(`Импортировано: ${result.imported}, совпадений пропущено: ${result.skipped}`)) pendingBackup = null;
+    }
+  }
+
+  function resetAllData() {
+    try {
+      const fresh = initialData(), serialized = JSON.stringify(fresh);
+      localStorage.setItem(STORAGE_KEY, serialized);
+      appData = fresh; lastSavedData = serialized; pendingBackup = null; storageWarning = ''; screen = 'plan';
+      applyPreferences(); updateStorageBadge(); render(); toast('Все локальные данные сброшены.');
+    } catch (error) {
+      storageWarning = error?.name === 'QuotaExceededError' ? 'Не удалось восстановить стартовые данные: в браузере закончилась квота.' : 'Не удалось сохранить стартовые данные в браузере.';
+      updateStorageBadge(); toast(storageWarning, true);
+    }
+  }
+
+  function requestFullReset(inputId) {
+    const phrase = document.getElementById(inputId)?.value || '';
+    if (phrase.trim() !== 'Удалить все данные') { toast('Для сброса введи фразу «Удалить все данные».', true); return; }
+    confirmAction('Удалить все данные?', 'Тренировки, упражнения, шаблоны, настройки и изображения будут удалены из этого браузера. Стартовый каталог загрузится заново.', 'Удалить все данные', resetAllData);
   }
 
   function toast(message, isError = false) {
@@ -312,7 +465,7 @@
       return `<button type="button" class="calendar-day ${date === selectedDate ? 'selected' : ''} ${date === localDateString(new Date()) ? 'today' : ''} ${inMonth ? '' : 'outside-month'}" data-action="select-date" data-date="${date}" aria-label="${formatDate(date)}${marks.length ? `, ${marks.map((w) => statusOf(w)).join(', ')}` : ''}"><span>${d.getDate()}</span>${marks.length ? `<span class="calendar-dots">${marks.slice(0, 3).map((w) => `<i title="${statusOf(w)}" class="calendar-mark status-${statusKey(statusOf(w))}" aria-hidden="true">${statusSymbol(statusOf(w))}</i>`).join('')}${marks.length > 3 ? `<b>+${marks.length - 3}</b>` : ''}</span>` : ''}</button>`;
     }).join('');
     const heading = calendarMode === 'week' ? `${formatDate(first, { day: 'numeric', month: 'long' })} — ${formatDate(shiftDate(first, 6), { day: 'numeric', month: 'long', year: 'numeric' })}` : new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(parseLocalDate(first));
-    app.innerHTML = `<div class="page-heading"><div><p class="eyebrow">План тренировок</p><h1>Календарь</h1><p class="subheading">Выбери день, чтобы просмотреть и провести тренировку.</p></div><div class="calendar-create"><button class="button button-primary" type="button" data-action="new-workout">＋ Тренировка</button><button class="button button-quiet" type="button" data-action="open-generator">Повторить по дням</button></div></div>
+    app.innerHTML = `${!appData.settings.onboardingDismissed ? `<section class="welcome"><div><p class="eyebrow">Добро пожаловать</p><h2>Планируй тренировки дома</h2><p>Собирай занятия из упражнений, отмечай выполнение и смотри прогресс. Данные сохраняются только в этом браузере.</p></div><div class="welcome-actions"><button class="button button-primary" type="button" data-screen="exercises">Каталог упражнений</button><button class="button button-quiet" type="button" data-screen="templates">Шаблоны</button><button class="button button-quiet" type="button" data-action="dismiss-welcome">Понятно</button></div></section>` : ''}<div class="page-heading"><div><p class="eyebrow">План тренировок</p><h1>Календарь</h1><p class="subheading">Выбери день, чтобы просмотреть и провести тренировку.</p></div><div class="calendar-create"><button class="button button-primary" type="button" data-action="new-workout">＋ Тренировка</button><button class="button button-quiet" type="button" data-action="open-generator">Повторить по дням</button></div></div>
       <section class="calendar-panel"><div class="calendar-toolbar"><div class="calendar-controls"><button class="button button-icon button-quiet" type="button" data-action="calendar-prev" aria-label="Предыдущий период">‹</button><button class="button button-small button-quiet" type="button" data-action="calendar-today">Сегодня</button><button class="button button-icon button-quiet" type="button" data-action="calendar-next" aria-label="Следующий период">›</button><h2>${escapeHtml(heading)}</h2></div><div class="mode-switch"><button class="button button-small ${calendarMode === 'week' ? 'button-primary' : 'button-quiet'}" type="button" data-action="calendar-week">Неделя</button><button class="button button-small ${calendarMode === 'month' ? 'button-primary' : 'button-quiet'}" type="button" data-action="calendar-month">Месяц</button></div></div><div class="calendar-grid">${names.map((name) => `<span class="calendar-weekday">${name}</span>`).join('')}${cells}</div><div class="calendar-legend"><span>✓ Выполнена</span><span>◐ В процессе</span><span>× Пропущена</span><span>! Не завершена</span><span>· Запланирована</span></div></section>
       <section class="day-panel"><div class="section-label"><div><p class="eyebrow">Выбранный день</p><h2>${escapeHtml(formatDate(selectedDate))}</h2></div><span class="count">${selectedWorkouts.length} ${plural(selectedWorkouts.length, 'тренировка', 'тренировки', 'тренировок')}</span></div>
       ${selectedWorkouts.length ? `<div class="day-workouts">${selectedWorkouts.map(workoutCard).join('')}</div>` : `<div class="empty-state compact-empty">На этот день тренировок нет.</div>`}</section>`;
@@ -388,7 +541,7 @@
       <section class="progress-period"><div class="calendar-controls"><button class="button button-icon button-quiet" type="button" data-action="progress-prev" aria-label="Предыдущий период">‹</button><button class="button button-small button-quiet" type="button" data-action="progress-today">Сегодня</button><button class="button button-icon button-quiet" type="button" data-action="progress-next" aria-label="Следующий период">›</button><h2>${escapeHtml(periodLabel)}</h2></div><div class="mode-switch">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([mode,label])=>`<button class="button button-small ${progressMode===mode?'button-primary':'button-quiet'}" type="button" data-action="progress-mode" data-mode="${mode}">${label}</button>`).join('')}</div></section>
       <section class="stats-grid">${[['Выполнено',stats.counts['Выполнена']],['Пропущено',stats.counts['Пропущена']],['В процессе',stats.counts['В процессе']],['Запланировано',stats.counts['Запланирована']],['Не завершено',stats.counts['Не завершена']]].map(([label,value])=>`<article class="stat-card"><span>${label}</span><strong>${value}</strong></article>`).join('')}</section>
       <section class="progress-summary"><article class="stat-card stat-wide"><span>Выполненные упражнения</span><strong>${stats.exercisesDone} / ${stats.exercisesTotal}</strong></article><article class="stat-card stat-wide"><span>Доля выполнения тренировок</span><strong>${stats.completionRate === null ? '—' : `${stats.completionRate}%`}</strong><small>Выполненные ÷ (выполненные + пропущенные + не завершённые)</small></article></section>
-      <section class="goal-panel"><div><p class="eyebrow">Цель текущей недели</p><h2>${streaks.thisWeekCount} из ${appData.goal.weeklyTarget} выполнено</h2><p>Текущая серия: ${streaks.current} ${plural(streaks.current,'неделя','недели','недель')} · рекорд: ${streaks.best} ${plural(streaks.best,'неделя','недели','недель')}</p></div><form id="goal-form" class="goal-form"><label for="weekly-goal">Цель в неделю</label><input id="weekly-goal" class="field" name="weeklyTarget" type="number" min="1" max="14" step="1" required value="${appData.goal.weeklyTarget}"><button class="button button-small button-primary" type="submit">Сохранить</button></form><p class="help-text goal-note">Регулярность рассчитана по текущей цели для всех недель.</p></section>
+      <section class="goal-panel"><div><p class="eyebrow">Цель текущей недели</p><h2>${streaks.thisWeekCount} из ${appData.goal.weeklyTarget} выполнено</h2><p>Текущая серия: ${streaks.current} ${plural(streaks.current,'неделя','недели','недель')} · рекорд: ${streaks.best} ${plural(streaks.best,'неделя','недели','недель')}</p></div><button class="button button-small button-quiet" type="button" data-screen="settings">Настроить цель</button><p class="help-text goal-note">Регулярность рассчитана по текущей цели для всех недель.</p></section>
       <section class="chart-panel"><div class="section-label"><div><p class="eyebrow">Динамика</p><h2>Выполненные тренировки</h2></div><span class="count">${progressMode === 'month' ? 'По неделям' : 'По дням'}</span></div>${progressChart(points,progressMode)}</section>
       <section class="history-panel"><div class="section-label"><div><p class="eyebrow">Все занятия</p><h2>История</h2></div><span class="count">${sortedHistory.length}</span></div>${sortedHistory.length ? `<div class="history-list">${sortedHistory.map(historyCard).join('')}</div>` : '<div class="empty-state compact-empty">История появится после добавления тренировок.</div>'}</section>`;
   }
@@ -519,13 +672,22 @@
     appData.goal.weeklyTarget = value; mutate('Недельная цель сохранена');
   }
 
+  function renderSettings() {
+    app.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Хранение и доступность</p><h1>Настройки</h1><p class="subheading">Все настройки и резервные копии остаются на этом устройстве.</p></div></div>
+      <section class="settings-panel"><h2>Цель и отображение</h2><form id="goal-form" class="goal-form"><label for="weekly-goal">Завершённых тренировок в неделю (1–14)<input id="weekly-goal" class="field" name="weeklyTarget" type="number" min="1" max="14" step="1" required value="${appData.goal.weeklyTarget}"></label><button class="button button-primary" type="submit">Сохранить цель</button></form>
+      <label class="setting-row"><span><strong>Крупный текст</strong><small>Увеличивает основной текст интерфейса.</small></span><input type="checkbox" id="setting-large-text" ${appData.settings.largeText ? 'checked' : ''}></label><label class="setting-row"><span><strong>Повышенная контрастность</strong><small>Усиливает контраст фона и подписей.</small></span><input type="checkbox" id="setting-high-contrast" ${appData.settings.highContrast ? 'checked' : ''}></label></section>
+      <section class="settings-panel"><h2>Знакомство</h2><p>Коротко показывает назначение разделов планировщика.</p><button type="button" class="button button-quiet" data-action="show-welcome">Показать знакомство</button></section>
+      <section class="settings-panel"><h2>Резервная копия</h2><p>Экспорт содержит настройки, упражнения, шаблоны, расписания, историю и пользовательские изображения.</p><div class="backup-actions"><button type="button" class="button button-primary" data-action="export-data">Экспортировать JSON</button></div><div class="form-field"><label for="backup-file">Импорт JSON</label><input class="field" id="backup-file" type="file" accept="application/json,.json"><p class="help-text">Файл проверяется до применения; некорректная копия не изменит текущие данные.</p></div><div class="form-field"><label for="import-mode">Режим импорта</label><select class="select-field" id="import-mode"><option value="replace">Заменить все данные</option><option value="merge">Объединить с текущими</option></select></div><p id="backup-status" class="notice" aria-live="polite">Выберите файл JSON.</p><button id="import-apply" type="button" class="button button-primary" data-action="apply-import" disabled>Применить импорт</button></section>
+      <section class="settings-panel danger-panel"><h2>Полный сброс</h2><p>Удалит все локальные записи и восстановит стартовый каталог. Действие нельзя отменить.</p><label class="form-field" for="reset-confirm-text">Для подтверждения введите фразу <strong>Удалить все данные</strong><input class="field" id="reset-confirm-text" autocomplete="off" placeholder="Удалить все данные"></label><button type="button" class="button button-danger" data-action="full-reset">Сбросить все данные</button></section>`;
+  }
+
   function render() {
     document.querySelectorAll('.nav-button').forEach((button) => {
       const active = button.dataset.screen === screen;
       button.classList.toggle('active', active);
       if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
     });
-    if (screen === 'templates') renderTemplates(); else if (screen === 'plan') renderPlan(); else if (screen === 'progress') renderProgress(); else renderExercises();
+    if (screen === 'templates') renderTemplates(); else if (screen === 'plan') renderPlan(); else if (screen === 'progress') renderProgress(); else if (screen === 'settings') renderSettings(); else renderExercises();
   }
 
   function plural(count, one, few, many) {
@@ -769,6 +931,11 @@
     else if (action === 'progress-prev' || action === 'progress-next') { const amount = action === 'progress-prev' ? -1 : 1, date = parseLocalDate(progressDate); if (progressMode === 'day') date.setDate(date.getDate() + amount); else if (progressMode === 'week') date.setDate(date.getDate() + amount * 7); else { date.setDate(1); date.setMonth(date.getMonth() + amount); } progressDate = localDateString(date); render(); }
     else if (action === 'progress-date') { selectedDate = calendarDate = button.dataset.date; screen = 'plan'; render(); }
     else if (action === 'progress-workout' && workout) workoutForm(workout, false, !canEditWorkout(workout) && statusOf(workout) === 'Выполнена');
+    else if (action === 'show-welcome') { appData.settings.onboardingDismissed = false; screen = 'plan'; mutate(); }
+    else if (action === 'export-data') exportData();
+    else if (action === 'apply-import') applyImport();
+    else if (action === 'full-reset') requestFullReset('reset-confirm-text');
+    else if (action === 'reset-corrupt') requestFullReset('reset-corrupt-text');
     else if (action === 'open-workout' && workout) workoutForm(workout, false, !canEditWorkout(workout) && statusOf(workout) === 'Выполнена');
     else if (action === 'edit-workout' && workout && canEditWorkout(workout)) workoutForm(workout);
     else if (action === 'skip-workout' && workout) { workout.skipped = true; workout.updatedAt = new Date().toISOString(); mutate('Тренировка отмечена как пропущенная'); }
@@ -788,10 +955,6 @@
       if (raw) downloadFile('fitness-planner-corrupted.txt', raw, 'text/plain;charset=utf-8');
       else toast('Сохранённые данные недоступны для копирования.', true);
     }
-    else if (action === 'reset-storage') confirmAction('Сбросить данные?', 'Все упражнения, шаблоны и локальные данные будут удалены, затем загрузится стартовый набор.', 'Сбросить', () => {
-      try { localStorage.removeItem(STORAGE_KEY); appData = initialData(); lastSavedData = ''; saveData(); render(); }
-      catch { toast('Браузер не разрешил удалить данные.', true); }
-    });
   }
 
   function openTemplateWithExercise(exercise) {
@@ -900,6 +1063,10 @@
   }
 
   function handleChange(event) {
+    if (event.target.id === 'backup-file') { handleBackupFile(event.target); return; }
+    if (event.target.id === 'setting-large-text' || event.target.id === 'setting-high-contrast') {
+      const key = event.target.id === 'setting-large-text' ? 'largeText' : 'highContrast'; appData.settings[key] = event.target.checked; mutate(key === 'largeText' ? 'Крупный текст обновлён' : 'Контрастность обновлена'); return;
+    }
     if (event.target.name === 'templateExercises') { updateTemplateSelection(event.target); return; }
     if (event.target.name === 'workoutExercise') { workoutDialog.dataset.dirty = 'true'; return; }
     if (event.target.matches('[data-action="toggle-item"]')) {
