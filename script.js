@@ -131,6 +131,7 @@
     if (mediaBytes > MAX_TOTAL_IMAGE_BYTES) return false;
     const assetIds = new Set(data.mediaAssets.map((asset) => asset.id));
     const validRef = (ref) => ref && (ref.type === 'builtin' ? !!BUILTIN_ART[ref.imageKey] : ref.type === 'custom' && assetIds.has(ref.assetId));
+    // Fractional weights are accepted only for loading pre-change data; normalizeData rounds them before use.
     const validPrescription = (prescription) => prescription && typeof prescription === 'object' && Object.entries(prescription).every(([key, value]) => ['sets','reps','durationSec','distanceMeters','weightKg'].includes(key) && Number.isFinite(value) && value > 0 && (key === 'weightKg' || Number.isInteger(value)));
     const validItems = (items) => Array.isArray(items) && items.every((item) => item && typeof item.itemId === 'string' && item.itemId.trim() && typeof item.exerciseId === 'string' && item.exerciseId.trim() && typeof item.exerciseNameSnapshot === 'string' && item.exerciseNameSnapshot.trim() && Array.isArray(item.muscleGroupsSnapshot) && item.muscleGroupsSnapshot.length && item.muscleGroupsSnapshot.every((group) => typeof group === 'string' && group.trim()) && typeof item.descriptionSnapshot === 'string' && item.descriptionSnapshot.trim() && validRef(item.illustrationRef) && validPrescription(item.prescription) && typeof item.completed === 'boolean' && (item.order === undefined || (Number.isInteger(item.order) && item.order >= 0)) && (item.equipmentSnapshot === undefined || (Array.isArray(item.equipmentSnapshot) && item.equipmentSnapshot.every((entry) => typeof entry === 'string'))));
     const validDate = (value) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false; const date = parseLocalDate(value); return localDateString(date) === value; };
@@ -145,6 +146,12 @@
     const normalized = structuredCloneSafe(data);
     normalized.settings ||= { highContrast: false, largeText: false, onboardingDismissed: false };
     normalized.goal ||= { weeklyTarget: 3 }; normalized.recurrences ||= []; normalized.uiState ||= { screen: 'plan' };
+    const roundPrescription = (prescription) => {
+      if (prescription && typeof prescription === 'object') Object.keys(prescription).forEach((key) => { if (Number.isFinite(prescription[key])) prescription[key] = Math.max(1, Math.round(prescription[key])); });
+    };
+    normalized.exercises.forEach((exercise) => roundPrescription(exercise.prescriptionDefaults));
+    normalized.templates.forEach((template) => template.items.forEach((item) => roundPrescription(item.prescription)));
+    normalized.workouts.forEach((workout) => workout.items.forEach((item) => roundPrescription(item.prescription)));
     return normalized;
   }
 
@@ -154,7 +161,12 @@
       if (raw) {
         const loaded = JSON.parse(raw);
         if (!validRoot(loaded)) throw new Error('Структура сохранённых данных не распознана.');
-        appData = loaded;
+        appData = normalizeData(loaded);
+        const normalized = JSON.stringify(appData);
+        if (normalized !== raw) {
+          try { localStorage.setItem(STORAGE_KEY, normalized); }
+          catch (error) { storageWarning = error?.name === 'QuotaExceededError' ? 'Не удалось обновить старые дробные значения: в браузере закончилась квота.' : 'Не удалось сохранить обновлённые целые значения.'; }
+        }
         appData.settings ||= { highContrast: false, largeText: false, onboardingDismissed: false };
         appData.goal ||= { weeklyTarget: 3 };
         appData.mediaAssets ||= [];
@@ -167,6 +179,7 @@
       }
       lastSavedData = JSON.stringify(appData);
       applyPreferences();
+      updateStorageBadge();
       render();
     } catch (error) {
       storageWarning = error.message || 'Сохранённые данные повреждены или недоступны.';
@@ -593,7 +606,7 @@
   function sessionExerciseRow(item, index, workout, readOnly, editAllowed) {
     const status = readOnly ? `<span class="status-label status-${item.completed ? 'done' : 'planned'}">${item.completed ? 'Выполнено' : 'Не отмечено'}</span>` : `<label class="exercise-check"><input type="checkbox" data-action="toggle-item" data-id="${item.itemId}" ${item.completed ? 'checked' : ''}><span>Выполнено</span></label>${editAllowed ? `<div class="template-reorder"><button class="button button-small button-icon button-quiet" type="button" data-action="move-workout-item" data-id="${item.itemId}" data-direction="up" aria-label="Переместить ${escapeHtml(item.exerciseNameSnapshot)} выше" ${index === 0 ? 'disabled' : ''}>↑</button><button class="button button-small button-icon button-quiet" type="button" data-action="move-workout-item" data-id="${item.itemId}" data-direction="down" aria-label="Переместить ${escapeHtml(item.exerciseNameSnapshot)} ниже" ${index === workout.items.length - 1 ? 'disabled' : ''}>↓</button></div>` : ''}`;
     const prescription = formatPrescription(item.prescription);
-    const prescriptionFields = editAllowed ? `<div class="session-prescription">${[['sets','Подходы'],['reps','Повторы'],['durationSec','Сек.'],['distanceMeters','Метры'],['weightKg','Кг']].map(([key,label]) => `<label>${label}<input class="field" type="number" min="0.1" step="${key === 'weightKg' ? '0.1' : '1'}" data-workout-param="${key}" value="${item.prescription?.[key] || ''}" aria-label="${label}: ${escapeHtml(item.exerciseNameSnapshot)}"></label>`).join('')}</div>` : (prescription ? `<small>${escapeHtml(prescription)}</small>` : '');
+    const prescriptionFields = editAllowed ? `<div class="session-prescription">${[['sets','Подходы'],['reps','Повторы'],['durationSec','Сек.'],['distanceMeters','Метры'],['weightKg','Кг']].map(([key,label]) => `<label>${label}<input class="field" type="number" min="1" step="1" data-workout-param="${key}" value="${item.prescription?.[key] || ''}" aria-label="${label}: ${escapeHtml(item.exerciseNameSnapshot)}"></label>`).join('')}</div>` : (prescription ? `<small>${escapeHtml(prescription)}</small>` : '');
     return `<article class="session-exercise" data-workout-row="${item.itemId}"><div class="session-art">${miniForItem(item)}</div><div><h3>${escapeHtml(item.exerciseNameSnapshot)}</h3><p>${escapeHtml(item.muscleGroupsSnapshot.join(' · '))}</p><p>${escapeHtml(item.descriptionSnapshot)}</p>${prescriptionFields}</div>${status}</article>`;
   }
 
@@ -616,10 +629,10 @@
         const row = form.querySelector(`[data-workout-row="${CSS.escape(item.itemId)}"]`);
         if (!row) return;
         const prescription = {};
-        row.querySelectorAll('[data-workout-param]').forEach((input) => { if (!input.value.trim()) return; const value = Number(input.value), key = input.dataset.workoutParam; if (!Number.isFinite(value) || value <= 0 || (key !== 'weightKg' && !Number.isInteger(value))) { invalidPrescription = true; return; } prescription[key] = value; });
+        row.querySelectorAll('[data-workout-param]').forEach((input) => { if (!input.value.trim()) return; const value = Number(input.value), key = input.dataset.workoutParam; if (!Number.isFinite(value) || value < 1 || !Number.isInteger(value)) { invalidPrescription = true; return; } prescription[key] = value; });
         item.prescription = prescription;
       });
-      if (invalidPrescription) { toast('Плановые параметры должны быть положительными числами; кроме нагрузки, они указываются целыми числами.', true); return; }
+      if (invalidPrescription) { toast('Все плановые параметры должны быть положительными целыми числами.', true); return; }
       items.forEach((item, index) => { item.order = index; });
     }
     else items = [...form.querySelectorAll('[name="workoutExercise"]:checked')].map((input, index) => snapshotItem(findExercise(input.value), index));
@@ -720,7 +733,7 @@
         <div class="form-field full"><span class="field-label">Иллюстрация упражнения *</span><div class="image-control"><div class="image-preview" id="exercise-image-preview">${imageMarkup || '<span class="help-text">Загрузи иллюстрацию</span>'}</div><div><input id="ex-image" name="image" type="file" accept="image/jpeg,image/png,image/webp" ${currentImage ? '' : 'required'}><p class="help-text">JPG, PNG или WebP. Будет локально уменьшена до 640 px и 150 KiB.</p></div></div></div>
         <div class="form-field"><label for="ex-sets">Подходы</label><input class="field" id="ex-sets" name="sets" type="number" min="1" step="1" value="${preset.sets || ''}"></div><div class="form-field"><label for="ex-reps">Повторения</label><input class="field" id="ex-reps" name="reps" type="number" min="1" step="1" value="${preset.reps || ''}"></div>
         <div class="form-field"><label for="ex-duration">Длительность (сек.)</label><input class="field" id="ex-duration" name="durationSec" type="number" min="1" step="1" value="${preset.durationSec || ''}"></div><div class="form-field"><label for="ex-distance">Расстояние (м)</label><input class="field" id="ex-distance" name="distanceMeters" type="number" min="1" step="1" value="${preset.distanceMeters || ''}"></div>
-        <div class="form-field"><label for="ex-weight">Нагрузка (кг)</label><input class="field" id="ex-weight" name="weightKg" type="number" min="0.1" step="0.1" value="${preset.weightKg || ''}"></div>
+        <div class="form-field"><label for="ex-weight">Нагрузка (кг)</label><input class="field" id="ex-weight" name="weightKg" type="number" min="1" step="1" value="${preset.weightKg || ''}"></div>
       </div><p class="form-error" id="exercise-error" aria-live="polite">${escapeHtml(pendingImageError)}</p><div class="form-actions"><button class="button button-quiet" type="button" data-action="close-exercise-dialog">Отмена</button><button class="button button-primary" type="submit">Сохранить упражнение</button></div></form>`;
     exerciseDialog.dataset.editingId = editing ? exercise.id : '';
     exerciseDialog.dataset.originalImageRef = currentImage ? JSON.stringify(currentImage) : '';
@@ -744,8 +757,7 @@
       const raw = form.elements.namedItem(key)?.value?.trim();
       if (raw !== '') {
         const value = Number(raw);
-        const integer = key !== 'weightKg';
-        if (!Number.isFinite(value) || value <= 0 || (integer && !Number.isInteger(value))) throw new Error('Плановые параметры должны быть положительными числами; подходы, повторы, время и расстояние — целыми.');
+        if (!Number.isFinite(value) || value < 1 || !Number.isInteger(value)) throw new Error('Все плановые параметры должны быть положительными целыми числами.');
         result[key] = value;
       }
     });
@@ -815,7 +827,7 @@
     const draft = JSON.parse(templateDialog.dataset.draftItems || '[]');
     const selectedIds = new Set(draft.map((item) => item.exerciseId));
     const available = appData.exercises.filter((exercise) => !exercise.isArchived);
-    const rows = draft.map((item, index) => `<div class="template-edit-row" data-template-row="${item.itemId}"><span class="mini-art">${miniForItem(item)}</span><div class="template-edit-main"><strong>${escapeHtml(item.exerciseNameSnapshot)}</strong><div class="template-edit-fields">${[['sets','Подходы'],['reps','Повторы'],['durationSec','Сек.'],['distanceMeters','Метры'],['weightKg','Кг']].map(([key,label]) => `<label>${label}<input class="field" type="number" min="0.1" step="${key === 'weightKg' ? '0.1' : '1'}" data-item-param="${key}" value="${item.prescription?.[key] || ''}" aria-label="${label}: ${escapeHtml(item.exerciseNameSnapshot)}"></label>`).join('')}</div></div><div class="template-reorder"><button class="button button-small button-icon button-quiet" type="button" data-action="move-template-item" data-id="${item.itemId}" data-direction="up" aria-label="Переместить ${escapeHtml(item.exerciseNameSnapshot)} выше" ${index === 0 ? 'disabled' : ''}>↑</button><button class="button button-small button-icon button-quiet" type="button" data-action="move-template-item" data-id="${item.itemId}" data-direction="down" aria-label="Переместить ${escapeHtml(item.exerciseNameSnapshot)} ниже" ${index === draft.length - 1 ? 'disabled' : ''}>↓</button></div></div>`).join('');
+    const rows = draft.map((item, index) => `<div class="template-edit-row" data-template-row="${item.itemId}"><span class="mini-art">${miniForItem(item)}</span><div class="template-edit-main"><strong>${escapeHtml(item.exerciseNameSnapshot)}</strong><div class="template-edit-fields">${[['sets','Подходы'],['reps','Повторы'],['durationSec','Сек.'],['distanceMeters','Метры'],['weightKg','Кг']].map(([key,label]) => `<label>${label}<input class="field" type="number" min="1" step="1" data-item-param="${key}" value="${item.prescription?.[key] || ''}" aria-label="${label}: ${escapeHtml(item.exerciseNameSnapshot)}"></label>`).join('')}</div></div><div class="template-reorder"><button class="button button-small button-icon button-quiet" type="button" data-action="move-template-item" data-id="${item.itemId}" data-direction="up" aria-label="Переместить ${escapeHtml(item.exerciseNameSnapshot)} выше" ${index === 0 ? 'disabled' : ''}>↑</button><button class="button button-small button-icon button-quiet" type="button" data-action="move-template-item" data-id="${item.itemId}" data-direction="down" aria-label="Переместить ${escapeHtml(item.exerciseNameSnapshot)} ниже" ${index === draft.length - 1 ? 'disabled' : ''}>↓</button></div></div>`).join('');
     templateDialog.innerHTML = `<form id="template-form" class="dialog-content"><div class="dialog-head"><div><p class="eyebrow">Список упражнений</p><h2>${editing ? 'Изменить шаблон' : duplicate ? 'Копия шаблона' : 'Новый шаблон'}</h2><p>Шаблон можно будет применить к дате.</p></div><button class="button button-icon button-quiet dialog-close" type="button" data-action="close-template-dialog" aria-label="Закрыть окно">×</button></div>
       <div class="form-field"><label for="template-name">Название шаблона *</label><input id="template-name" class="field" maxlength="80" required value="${escapeHtml(templateDialog.dataset.formName || '')}"></div>
       <div class="section-label"><h2>Добавить упражнения *</h2><span class="count">Отметь состав</span></div><div class="check-grid template-select-list">${available.map((exercise) => `<label class="check-chip"><input type="checkbox" name="templateExercises" value="${exercise.id}" ${selectedIds.has(exercise.id) ? 'checked' : ''}>${escapeHtml(exercise.name)}</label>`).join('')}</div>
@@ -1017,7 +1029,7 @@
     try {
       items.forEach((item) => {
         Object.entries(item.prescription || {}).forEach(([key, value]) => {
-          if (!Number.isFinite(value) || value <= 0 || (key !== 'weightKg' && !Number.isInteger(value))) throw new Error('Плановые параметры должны быть положительными числами; подходы, повторы, время и расстояние — целыми.');
+        if (!Number.isFinite(value) || value < 1 || !Number.isInteger(value)) throw new Error('Все плановые параметры должны быть положительными целыми числами.');
         });
       });
     } catch (error) { errorBox.textContent = error.message; return; }
