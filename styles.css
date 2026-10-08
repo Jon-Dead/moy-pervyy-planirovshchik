@@ -230,6 +230,7 @@ body.high-contrast { --muted: #d0ccd4; --line: #77747e; --surface: #101012; --su
 .session-exercise { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: var(--surface-raised); }
 .session-art { width: 76px; height: 66px; overflow: hidden; border-radius: 9px; }
 .session-art svg, .session-art img { width: 100%; height: 100%; object-fit: cover; }
+.session-art img.builtin-art { object-fit: contain; }
 .session-exercise h3, .session-exercise p { margin: 3px 0; }
 .session-exercise p { color: var(--muted); font-size: 13px; }
 .session-prescription { display: grid; grid-template-columns: repeat(5, minmax(58px, 1fr)); gap: 6px; margin-top: 10px; }
