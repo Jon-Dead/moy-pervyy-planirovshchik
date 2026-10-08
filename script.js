@@ -565,6 +565,7 @@
     const picker = (!editing || editAllowed) && !readOnly ? `<div class="form-field"><span class="field-label">Упражнения *</span><div class="check-grid">${exerciseChoices.map((e) => `<label class="check-chip"><input type="checkbox" name="workoutExercise" value="${e.id}" ${selected.has(e.id) ? 'checked' : ''}>${escapeHtml(e.name)}${e.isArchived ? ' · архив' : ''}</label>`).join('')}</div></div>` : '';
     const controls = readOnly ? `<div class="form-actions"><button class="button button-quiet" type="button" data-action="close-workout-dialog">Закрыть</button><button class="button button-quiet" type="button" data-action="copy-workout" data-id="${workout.id}">Копировать</button></div>` : editAllowed || !editing ? `<div class="form-actions"><button class="button button-quiet" type="button" data-action="close-workout-dialog">Отмена</button><button class="button button-primary" type="submit">Сохранить</button></div>` : `<div class="form-actions"><button class="button button-quiet" type="button" data-action="close-workout-dialog">Закрыть</button></div>`;
     workoutDialog.innerHTML = `<form id="workout-form" class="dialog-content"><div class="dialog-head"><div><p class="eyebrow">${editing ? 'Тренировка' : duplicate ? 'Копирование' : 'Новое занятие'}</p><h2>${escapeHtml(workout?.title || (workout?.source === 'template' ? workout.templateNameSnapshot : 'Тренировка'))}</h2>${editing ? `<span class="status-label status-${statusKey(statusOf(workout))}">${statusOf(workout)}</span>` : ''}</div><button class="button button-icon button-quiet dialog-close" type="button" data-action="close-workout-dialog" aria-label="Закрыть окно">×</button></div>
+      ${!readOnly ? '<p id="workout-unsaved-notice" class="notice workout-unsaved-notice" role="status" aria-live="polite" hidden>Есть несохранённые изменения. Нажмите «Сохранить», чтобы применить их.</p>' : ''}
       <label class="form-field">Дата тренировки<input class="field" type="date" name="date" required value="${dateValue}" ${editing && workout.date <= localDateString(new Date()) ? 'disabled' : ''} ${editing && workout.date > localDateString(new Date()) ? `min="${localDateString(new Date())}"` : ''}></label>
       ${picker}
       ${editing || readOnly ? `<div class="session-exercises">${rows || '<p class="help-text">В этой тренировке пока нет упражнений.</p>'}</div>` : ''}
@@ -1093,8 +1094,18 @@
     else dialog.close();
   }
 
-  document.addEventListener('input', (event) => { const form = event.target.closest('dialog form'); if (form) form.closest('dialog').dataset.dirty = 'true'; });
-  document.addEventListener('change', (event) => { const form = event.target.closest('dialog form'); if (form) form.closest('dialog').dataset.dirty = 'true'; });
+  function markDialogDirty(event) {
+    const form = event.target.closest('dialog form');
+    if (!form) return;
+    form.closest('dialog').dataset.dirty = 'true';
+    if (form.id === 'workout-form') {
+      const notice = form.querySelector('#workout-unsaved-notice');
+      if (notice) notice.hidden = false;
+    }
+  }
+
+  document.addEventListener('input', markDialogDirty);
+  document.addEventListener('change', markDialogDirty);
   app.addEventListener('input', handleInput);
   document.addEventListener('click', handleClick);
   document.addEventListener('submit', (event) => { handleExerciseSubmit(event); handleTemplateSubmit(event); handleApplySubmit(event); saveWorkoutForm(event); submitCopyWorkout(event); submitGenerator(event); submitGoal(event); });

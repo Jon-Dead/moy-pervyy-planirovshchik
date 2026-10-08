@@ -298,6 +298,7 @@ body.high-contrast { --muted: #d0ccd4; --line: #77747e; --surface: #101012; --su
 .backup-actions { margin: 12px 0; }
 .danger-panel { border-color: #69343a; }
 .error-dot { background: var(--accent) !important; }
+.workout-unsaved-notice { position: sticky; top: 0; z-index: 2; border-color: #a66d2d; box-shadow: 0 5px 16px #0008; }
 @media (max-width: 620px) {
   .main-nav { flex-wrap: wrap; overflow: visible; }
   .nav-button { flex: 1 1 28%; min-width: 0; padding: 0 4px; }
