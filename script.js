@@ -69,6 +69,8 @@
   let calendarMode = 'week';
   let calendarDate = localDateString(new Date());
   let selectedDate = localDateString(new Date());
+  let progressMode = 'week';
+  let progressDate = localDateString(new Date());
   let search = '';
   let groupFilter = '';
   let equipmentFilter = '';
@@ -285,8 +287,9 @@
     if (workout.skipped) return 'Пропущена';
     const total = workout.items.length, done = workout.items.filter((item) => item.completed).length;
     if (total && done === total) return 'Выполнена';
+    if (workout.date < localDateString(new Date())) return 'Не завершена';
     if (done) return 'В процессе';
-    return workout.date < localDateString(new Date()) ? 'Не завершена' : 'Запланирована';
+    return 'Запланирована';
   }
   function canEditWorkout(workout) {
     const today = localDateString(new Date());
@@ -313,6 +316,81 @@
       <section class="calendar-panel"><div class="calendar-toolbar"><div class="calendar-controls"><button class="button button-icon button-quiet" type="button" data-action="calendar-prev" aria-label="Предыдущий период">‹</button><button class="button button-small button-quiet" type="button" data-action="calendar-today">Сегодня</button><button class="button button-icon button-quiet" type="button" data-action="calendar-next" aria-label="Следующий период">›</button><h2>${escapeHtml(heading)}</h2></div><div class="mode-switch"><button class="button button-small ${calendarMode === 'week' ? 'button-primary' : 'button-quiet'}" type="button" data-action="calendar-week">Неделя</button><button class="button button-small ${calendarMode === 'month' ? 'button-primary' : 'button-quiet'}" type="button" data-action="calendar-month">Месяц</button></div></div><div class="calendar-grid">${names.map((name) => `<span class="calendar-weekday">${name}</span>`).join('')}${cells}</div><div class="calendar-legend"><span>✓ Выполнена</span><span>◐ В процессе</span><span>× Пропущена</span><span>! Не завершена</span><span>· Запланирована</span></div></section>
       <section class="day-panel"><div class="section-label"><div><p class="eyebrow">Выбранный день</p><h2>${escapeHtml(formatDate(selectedDate))}</h2></div><span class="count">${selectedWorkouts.length} ${plural(selectedWorkouts.length, 'тренировка', 'тренировки', 'тренировок')}</span></div>
       ${selectedWorkouts.length ? `<div class="day-workouts">${selectedWorkouts.map(workoutCard).join('')}</div>` : `<div class="empty-state compact-empty">На этот день тренировок нет.</div>`}</section>`;
+  }
+
+  function periodRange(mode, anchor) {
+    if (mode === 'day') return { start: anchor, end: anchor };
+    if (mode === 'week') { const start = mondayOf(anchor); return { start, end: shiftDate(start, 6) }; }
+    const date = parseLocalDate(anchor), start = localDateString(new Date(date.getFullYear(), date.getMonth(), 1));
+    return { start, end: localDateString(new Date(date.getFullYear(), date.getMonth() + 1, 0)) };
+  }
+
+  function progressStats(mode, anchor) {
+    const range = periodRange(mode, anchor);
+    const workouts = appData.workouts.filter((workout) => workout.date >= range.start && workout.date <= range.end);
+    const counts = { 'Выполнена': 0, 'Пропущена': 0, 'В процессе': 0, 'Запланирована': 0, 'Не завершена': 0 };
+    let exercisesDone = 0, exercisesTotal = 0;
+    workouts.forEach((workout) => { counts[statusOf(workout)]++; exercisesDone += workout.items.filter((item) => item.completed).length; exercisesTotal += workout.items.length; });
+    const denominator = counts['Выполнена'] + counts['Пропущена'] + counts['Не завершена'];
+    return { ...range, workouts, counts, exercisesDone, exercisesTotal, completionRate: denominator ? Math.round(counts['Выполнена'] / denominator * 100) : null };
+  }
+
+  function chartPoints(stats, mode) {
+    if (!stats.workouts.length) return [];
+    const groups = new Map();
+    stats.workouts.forEach((workout) => {
+      const key = mode === 'month' ? mondayOf(workout.date) : workout.date;
+      if (!groups.has(key)) groups.set(key, { key, date: workout.date, total: 0, completed: 0 });
+      const point = groups.get(key); if (workout.date < point.date) point.date = workout.date; point.total++; if (statusOf(workout) === 'Выполнена') point.completed++;
+    });
+    return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  function goalStreaks() {
+    const goal = appData.goal.weeklyTarget;
+    const weeklyCounts = new Map();
+    appData.workouts.forEach((workout) => { if (statusOf(workout) === 'Выполнена') { const week = mondayOf(workout.date); weeklyCounts.set(week, (weeklyCounts.get(week) || 0) + 1); } });
+    const currentWeek = mondayOf(localDateString(new Date()));
+    const thisWeekCount = weeklyCounts.get(currentWeek) || 0;
+    let cursor = thisWeekCount >= goal ? currentWeek : shiftDate(currentWeek, -7), current = 0;
+    while ((weeklyCounts.get(cursor) || 0) >= goal) { current++; cursor = shiftDate(cursor, -7); }
+    const workoutDates = appData.workouts.map((workout) => workout.date).sort();
+    if (!workoutDates.length) return { current, best: 0, thisWeekCount };
+    let best = 0, run = 0;
+    for (let week = mondayOf(workoutDates[0]); week <= currentWeek; week = shiftDate(week, 7)) {
+      if ((weeklyCounts.get(week) || 0) >= goal) { run++; best = Math.max(best, run); } else run = 0;
+    }
+    return { current, best, thisWeekCount };
+  }
+
+  function progressChart(points, mode) {
+    if (!points.length) return '<div class="empty-state compact-empty">За этот период пока нет тренировок для графика.</div>';
+    const max = Math.max(1, ...points.map((point) => point.completed));
+    return `<div class="progress-chart" role="group" aria-label="Выполненные тренировки по ${mode === 'month' ? 'неделям' : 'дням'}">${points.map((point) => {
+      const dateLabel = mode === 'month' ? `Неделя с ${formatDate(point.key, { day: 'numeric', month: 'short' })}` : formatDate(point.date, { day: 'numeric', month: 'short' });
+      const height = point.completed ? Math.max(10, Math.round(point.completed / max * 132)) : 0;
+      return `<button class="chart-point" type="button" data-action="progress-date" data-date="${point.date}" aria-label="${dateLabel}: выполнено тренировок ${point.completed} из ${point.total}"><span class="chart-value">${point.completed}</span><span class="chart-bar" style="height:${height}px"></span><span class="chart-label">${escapeHtml(dateLabel)}</span></button>`;
+    }).join('')}</div>`;
+  }
+
+  function historyCard(workout) {
+    const status = statusOf(workout), completed = workout.items.filter((item) => item.completed).length;
+    const created = workout.createdAt ? new Date(workout.createdAt) : null;
+    const time = created && !Number.isNaN(created.getTime()) ? new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(created) : '';
+    return `<article class="history-card"><button type="button" class="history-open" data-action="progress-workout" data-id="${workout.id}"><span class="history-date">${escapeHtml(formatDate(workout.date, { day: 'numeric', month: 'short', year: 'numeric', weekday: 'short' }))}${time ? ` · ${time}` : ''}</span><strong>${escapeHtml(workout.title || workout.templateNameSnapshot || 'Тренировка')}</strong><span class="status-label status-${statusKey(status)}">${status}</span><small>${completed}/${workout.items.length} упражнений</small></button></article>`;
+  }
+
+  function renderProgress() {
+    const stats = progressStats(progressMode, progressDate), points = chartPoints(stats, progressMode), streaks = goalStreaks();
+    const periodLabel = progressMode === 'day' ? formatDate(progressDate) : progressMode === 'week' ? `${formatDate(stats.start, { day: 'numeric', month: 'short' })} — ${formatDate(stats.end, { day: 'numeric', month: 'short', year: 'numeric' })}` : new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(parseLocalDate(stats.start));
+    const sortedHistory = [...appData.workouts].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || ''));
+    app.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Регулярность и результаты</p><h1>Прогресс</h1><p class="subheading">Итоги тренировок и выполненных упражнений.</p></div></div>
+      <section class="progress-period"><div class="calendar-controls"><button class="button button-icon button-quiet" type="button" data-action="progress-prev" aria-label="Предыдущий период">‹</button><button class="button button-small button-quiet" type="button" data-action="progress-today">Сегодня</button><button class="button button-icon button-quiet" type="button" data-action="progress-next" aria-label="Следующий период">›</button><h2>${escapeHtml(periodLabel)}</h2></div><div class="mode-switch">${[['day','День'],['week','Неделя'],['month','Месяц']].map(([mode,label])=>`<button class="button button-small ${progressMode===mode?'button-primary':'button-quiet'}" type="button" data-action="progress-mode" data-mode="${mode}">${label}</button>`).join('')}</div></section>
+      <section class="stats-grid">${[['Выполнено',stats.counts['Выполнена']],['Пропущено',stats.counts['Пропущена']],['В процессе',stats.counts['В процессе']],['Запланировано',stats.counts['Запланирована']],['Не завершено',stats.counts['Не завершена']]].map(([label,value])=>`<article class="stat-card"><span>${label}</span><strong>${value}</strong></article>`).join('')}</section>
+      <section class="progress-summary"><article class="stat-card stat-wide"><span>Выполненные упражнения</span><strong>${stats.exercisesDone} / ${stats.exercisesTotal}</strong></article><article class="stat-card stat-wide"><span>Доля выполнения тренировок</span><strong>${stats.completionRate === null ? '—' : `${stats.completionRate}%`}</strong><small>Выполненные ÷ (выполненные + пропущенные + не завершённые)</small></article></section>
+      <section class="goal-panel"><div><p class="eyebrow">Цель текущей недели</p><h2>${streaks.thisWeekCount} из ${appData.goal.weeklyTarget} выполнено</h2><p>Текущая серия: ${streaks.current} ${plural(streaks.current,'неделя','недели','недель')} · рекорд: ${streaks.best} ${plural(streaks.best,'неделя','недели','недель')}</p></div><form id="goal-form" class="goal-form"><label for="weekly-goal">Цель в неделю</label><input id="weekly-goal" class="field" name="weeklyTarget" type="number" min="1" max="14" step="1" required value="${appData.goal.weeklyTarget}"><button class="button button-small button-primary" type="submit">Сохранить</button></form><p class="help-text goal-note">Регулярность рассчитана по текущей цели для всех недель.</p></section>
+      <section class="chart-panel"><div class="section-label"><div><p class="eyebrow">Динамика</p><h2>Выполненные тренировки</h2></div><span class="count">${progressMode === 'month' ? 'По неделям' : 'По дням'}</span></div>${progressChart(points,progressMode)}</section>
+      <section class="history-panel"><div class="section-label"><div><p class="eyebrow">Все занятия</p><h2>История</h2></div><span class="count">${sortedHistory.length}</span></div>${sortedHistory.length ? `<div class="history-list">${sortedHistory.map(historyCard).join('')}</div>` : '<div class="empty-state compact-empty">История появится после добавления тренировок.</div>'}</section>`;
   }
 
   function statusKey(status) { return ({ 'Выполнена': 'done', 'В процессе': 'progress', 'Пропущена': 'skipped', 'Не завершена': 'incomplete', 'Запланирована': 'planned' })[status] || 'planned'; }
@@ -434,13 +512,20 @@
     selectedDate = dates[0]; calendarDate = dates[0]; screen = 'plan'; if (mutate(`${dates.length} тренировок создано`)) generatorDialog.close();
   }
 
+  function submitGoal(event) {
+    if (event.target.id !== 'goal-form') return;
+    event.preventDefault(); const value = Number(event.target.elements.weeklyTarget.value);
+    if (!Number.isInteger(value) || value < 1 || value > 14) { toast('Цель должна быть целым числом от 1 до 14.', true); return; }
+    appData.goal.weeklyTarget = value; mutate('Недельная цель сохранена');
+  }
+
   function render() {
     document.querySelectorAll('.nav-button').forEach((button) => {
       const active = button.dataset.screen === screen;
       button.classList.toggle('active', active);
       if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
     });
-    if (screen === 'templates') renderTemplates(); else if (screen === 'plan') renderPlan(); else renderExercises();
+    if (screen === 'templates') renderTemplates(); else if (screen === 'plan') renderPlan(); else if (screen === 'progress') renderProgress(); else renderExercises();
   }
 
   function plural(count, one, few, many) {
@@ -679,6 +764,11 @@
     else if (action === 'calendar-today') { calendarDate = selectedDate = localDateString(new Date()); render(); }
     else if (action === 'calendar-prev' || action === 'calendar-next') { const amount = action === 'calendar-prev' ? -1 : 1; const date = parseLocalDate(calendarDate); if (calendarMode === 'week') { date.setDate(date.getDate() + amount * 7); selectedDate = shiftDate(selectedDate, amount * 7); } else { date.setDate(1); date.setMonth(date.getMonth() + amount); selectedDate = localDateString(date); } calendarDate = localDateString(date); render(); }
     else if (action === 'select-date') { selectedDate = button.dataset.date; calendarDate = selectedDate; render(); }
+    else if (action === 'progress-mode') { progressMode = button.dataset.mode; render(); }
+    else if (action === 'progress-today') { progressDate = localDateString(new Date()); render(); }
+    else if (action === 'progress-prev' || action === 'progress-next') { const amount = action === 'progress-prev' ? -1 : 1, date = parseLocalDate(progressDate); if (progressMode === 'day') date.setDate(date.getDate() + amount); else if (progressMode === 'week') date.setDate(date.getDate() + amount * 7); else { date.setDate(1); date.setMonth(date.getMonth() + amount); } progressDate = localDateString(date); render(); }
+    else if (action === 'progress-date') { selectedDate = calendarDate = button.dataset.date; screen = 'plan'; render(); }
+    else if (action === 'progress-workout' && workout) workoutForm(workout, false, !canEditWorkout(workout) && statusOf(workout) === 'Выполнена');
     else if (action === 'open-workout' && workout) workoutForm(workout, false, !canEditWorkout(workout) && statusOf(workout) === 'Выполнена');
     else if (action === 'edit-workout' && workout && canEditWorkout(workout)) workoutForm(workout);
     else if (action === 'skip-workout' && workout) { workout.skipped = true; workout.updatedAt = new Date().toISOString(); mutate('Тренировка отмечена как пропущенная'); }
@@ -840,7 +930,7 @@
   document.addEventListener('change', (event) => { const form = event.target.closest('dialog form'); if (form) form.closest('dialog').dataset.dirty = 'true'; });
   app.addEventListener('input', handleInput);
   document.addEventListener('click', handleClick);
-  document.addEventListener('submit', (event) => { handleExerciseSubmit(event); handleTemplateSubmit(event); handleApplySubmit(event); saveWorkoutForm(event); submitCopyWorkout(event); submitGenerator(event); });
+  document.addEventListener('submit', (event) => { handleExerciseSubmit(event); handleTemplateSubmit(event); handleApplySubmit(event); saveWorkoutForm(event); submitCopyWorkout(event); submitGenerator(event); submitGoal(event); });
   document.addEventListener('change', (event) => { if (event.target.id === 'ex-image') handleImageInput(event.target); handleChange(event); });
   document.addEventListener('keydown', handleKeydown);
 
