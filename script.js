@@ -8,26 +8,20 @@
   const MUSCLE_GROUPS = ['Грудь', 'Спина', 'Ноги и ягодицы', 'Плечи', 'Руки', 'Пресс и кор', 'Кардио / всё тело'];
   const EQUIPMENT = ['Без инвентаря', 'Стул / опора', 'Гантели', 'Фитнес-резинка', 'Турник'];
 
-  let illustrationSequence = 0;
-  const svgBase = (label, figure) => {
-    const gradientId = `art-bg-${++illustrationSequence}`;
-    return `<svg viewBox="0 0 180 150" role="img" aria-label="${label}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="${gradientId}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#51252e"/><stop offset="1" stop-color="#201b21"/></linearGradient></defs><rect width="180" height="150" rx="16" fill="url(#${gradientId})"/><path d="M15 123h150" stroke="#625158" stroke-width="2"/><g fill="none" stroke="#f4edf0" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">${figure}</g><g fill="#f0444b"><circle cx="90" cy="77" r="5"/><circle cx="90" cy="77" r="10" fill-opacity=".18"/></g></svg>`;
-  };
-
   const BUILTIN_ART = {
-    pushup: svgBase('Схема отжимания от пола: упор лёжа', '<circle cx="42" cy="75" r="11" fill="#f4edf0" stroke="none"/><path d="M54 80 97 91 130 87M70 84 58 111M105 90 123 111M130 87 154 107M58 111h-9M123 111h9"/><path d="M78 85 101 91" stroke="#ff7077" stroke-width="10"/>'),
-    squat: svgBase('Схема приседания с собственным весом', '<circle cx="91" cy="27" r="11" fill="#f4edf0" stroke="none"/><path d="M91 40 88 76 65 91 46 119M88 76 112 90 135 115M88 52 60 67 48 88M89 53 116 65 130 84M46 119h-12M135 115h12"/><path d="M88 58 89 77 65 91" stroke="#ff7077" stroke-width="10"/>'),
-    lunge: svgBase('Схема выпада на месте', '<circle cx="90" cy="24" r="11" fill="#f4edf0" stroke="none"/><path d="M90 37 88 72 67 88 50 117M88 72 113 85 139 106M88 49 62 63 51 81M89 49 117 61 131 78M50 117h-13M139 106h13"/><path d="M88 57 88 73 67 88" stroke="#ff7077" stroke-width="10"/>'),
-    bridge: svgBase('Схема ягодичного мостика лёжа', '<circle cx="39" cy="96" r="10" fill="#f4edf0" stroke="none"/><path d="M50 96 82 95 105 71 131 79 150 111M105 71 103 113M131 79 137 112M103 113h-9M137 112h11"/><path d="M80 95 105 71 124 77" stroke="#ff7077" stroke-width="10"/>'),
-    plank: svgBase('Схема планки на предплечьях', '<circle cx="42" cy="72" r="11" fill="#f4edf0" stroke="none"/><path d="M55 77 99 83 133 82M72 80 61 108M101 83 113 108M133 82 153 106M61 108h-9M113 108h9"/><path d="M58 78 99 83 128 82" stroke="#ff7077" stroke-width="10"/>'),
-    jumping: svgBase('Схема прыжков джампинг-джек', '<circle cx="90" cy="28" r="11" fill="#f4edf0" stroke="none"/><path d="M90 42 90 82M90 52 55 28 32 15M90 52 125 28 148 15M90 82 54 119 30 136M90 82 126 119 150 136"/><path d="M90 45 90 79" stroke="#ff7077" stroke-width="10"/>'),
-    birdDog: svgBase('Схема упражнения «Птица-собака»', '<circle cx="54" cy="60" r="10" fill="#f4edf0" stroke="none"/><path d="M65 65 103 72 130 70M82 69 67 101 48 104M102 72 120 99 142 103M72 67 46 47 28 38M105 70 136 53 157 47M48 104h-8M142 103h9"/><path d="M68 66 103 72" stroke="#ff7077" stroke-width="10"/>'),
-    crunch: svgBase('Схема скручивания на пресс', '<circle cx="48" cy="79" r="10" fill="#f4edf0" stroke="none"/><path d="M58 81 91 91 116 78M91 91 85 117M116 78 135 55 151 57M85 117h-12M135 55l12-8M62 76 73 57 91 51M82 61 97 73"/><path d="M59 81 91 91 111 80" stroke="#ff7077" stroke-width="10"/>'),
-    calf: svgBase('Схема подъёма на носки', '<circle cx="88" cy="25" r="11" fill="#f4edf0" stroke="none"/><path d="M88 38 88 76 73 102 73 119M88 76 105 102 105 119M88 51 63 67 58 84M89 51 113 65 119 82M73 119h-13M105 119h13"/><path d="M77 96 73 112M101 96 105 112" stroke="#ff7077" stroke-width="10"/>'),
-    deadbug: svgBase('Схема упражнения «Жук» лёжа', '<circle cx="43" cy="84" r="10" fill="#f4edf0" stroke="none"/><path d="M54 85 89 87 115 70M89 87 119 100 143 97M86 86 76 57 57 47M89 86 111 59 132 54M115 70 134 83 151 83"/><path d="M54 85 88 87 109 73" stroke="#ff7077" stroke-width="10"/>'),
-    chair: svgBase('Схема обратного отжимания от опоры', '<path d="M122 48v66M122 69h29M139 69v45M122 114h33" stroke="#b1aab3" stroke-width="5" fill="none"/><circle cx="61" cy="48" r="10" fill="#f4edf0" stroke="none"/><path d="M70 54 91 74 119 70M91 74 91 102 124 102M75 58 99 69 121 69M91 102 76 117M124 102 141 115"/><path d="M91 73 118 70" stroke="#ff7077" stroke-width="9"/>'),
-    row: svgBase('Схема тяги к поясу в наклоне', '<circle cx="92" cy="31" r="10" fill="#f4edf0" stroke="none"/><path d="M88 43 69 73 98 84 124 88M69 73 51 109 44 124M98 84 115 110 133 122M77 59 53 81 41 72M78 60 102 77 119 69M41 72h-8M119 69l8-7"/><path d="M73 69 96 81" stroke="#ff7077" stroke-width="9"/>'),
-    press: svgBase('Схема жима рук вверх стоя', '<circle cx="91" cy="26" r="11" fill="#f4edf0" stroke="none"/><path d="M91 39 91 82M91 52 67 31 57 16M91 52 115 31 125 16M91 82 72 117M91 82 110 117M57 16l-5-6M125 16l5-6"/><path d="M91 43 91 77" stroke="#ff7077" stroke-width="10"/>')
+    pushup: 'assets/exercises/01-pushups.webp',
+    squat: 'assets/exercises/02-squats.webp',
+    lunge: 'assets/exercises/03-lunges.webp',
+    bridge: 'assets/exercises/04-glute-bridge.webp',
+    plank: 'assets/exercises/05-plank.webp',
+    jumping: 'assets/exercises/06-jumping-jacks.webp',
+    birdDog: 'assets/exercises/07-bird-dog.webp',
+    crunch: 'assets/exercises/08-crunches.webp',
+    calf: 'assets/exercises/09-calf-raises.webp',
+    deadbug: 'assets/exercises/10-dead-bug.webp',
+    chair: 'assets/exercises/11-chair-dips.webp',
+    row: 'assets/exercises/12-bent-over-row.webp',
+    press: 'assets/exercises/13-overhead-press.webp'
   };
 
   const BUILTIN_EXERCISES = [
@@ -368,14 +362,18 @@
     return min ? (sec ? `${min} мин ${sec} сек` : `${min} мин`) : `${sec} сек`;
   }
 
+  function builtinImage(imageKey, alt = '', className = 'builtin-art') {
+    const src = BUILTIN_ART[imageKey] || BUILTIN_ART.squat;
+    return `<img class="${className}" src="${src}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">`;
+  }
+
   function illustration(ref, alt = 'Иллюстрация упражнения') {
     let markup = '';
     if (ref?.type === 'custom') {
       const asset = appData.mediaAssets.find((entry) => entry.id === ref.assetId);
       if (asset?.dataUrl) markup = `<img src="${asset.dataUrl}" alt="${escapeHtml(alt)}">`;
     } else if (ref?.type === 'builtin') {
-      markup = BUILTIN_ART[ref.imageKey] || BUILTIN_ART.squat;
-      markup = markup.replace(/aria-label="[^"]*"/, `aria-label="${escapeHtml(alt)}"`);
+      markup = builtinImage(ref.imageKey, alt);
     }
     return markup ? `<div class="exercise-art">${markup}</div>` : '<div class="exercise-art" role="img" aria-label="Иллюстрация недоступна"></div>';
   }
@@ -432,8 +430,7 @@
       const asset = appData.mediaAssets.find((entry) => entry.id === ref.assetId);
       if (asset?.dataUrl) return `<img src="${asset.dataUrl}" alt="" class="mini-art">`;
     }
-    const art = BUILTIN_ART[ref?.imageKey] || BUILTIN_ART.squat;
-    return art.replace('<svg ', '<svg ').replace(/aria-label="[^"]*"/, `aria-label="${escapeHtml(alt)}"`);
+    return builtinImage(ref?.imageKey, alt || '', 'mini-art builtin-art');
   }
 
   function renderTemplates() {
@@ -723,7 +720,7 @@
     const selectedEquipment = exercise?.equipment || ['Без инвентаря'];
     const preset = exercise?.prescriptionDefaults || {};
     const currentImage = exercise?.illustrationRef;
-    const imageMarkup = currentImage ? (currentImage.type === 'builtin' ? BUILTIN_ART[currentImage.imageKey] : miniImageByRef(currentImage)) : '';
+    const imageMarkup = currentImage ? (currentImage.type === 'builtin' ? builtinImage(currentImage.imageKey, 'Предпросмотр встроенной иллюстрации') : miniImageByRef(currentImage)) : '';
     exerciseDialog.innerHTML = `<form id="exercise-form" class="dialog-content"><div class="dialog-head"><div><p class="eyebrow">Каталог упражнений</p><h2>${title}</h2><p>Иллюстрация и описание обязательны. Данные останутся на устройстве.</p></div><button class="button button-icon button-quiet dialog-close" type="button" data-action="close-exercise-dialog" aria-label="Закрыть окно">×</button></div>
       <input type="hidden" name="exerciseId" value="${duplicate ? '' : escapeHtml(exercise?.id || '')}">
       <div class="form-grid"><div class="form-field full"><label for="ex-name">Название *</label><input class="field" id="ex-name" name="name" maxlength="80" required value="${duplicate ? `Копия: ${escapeHtml(exercise.name)}` : escapeHtml(exercise?.name || '')}" placeholder="Например, приседания"></div>
@@ -748,7 +745,7 @@
       const asset = appData.mediaAssets.find((entry) => entry.id === ref.assetId);
       return asset ? `<img src="${asset.dataUrl}" alt="" style="width:100%;height:100%;object-fit:cover">` : '';
     }
-    return BUILTIN_ART[ref?.imageKey] || '';
+    return builtinImage(ref?.imageKey, '', 'builtin-art');
   }
 
   function readPrescription(form) {
